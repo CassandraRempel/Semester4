@@ -1,0 +1,318 @@
+---
+title: "ExpMeth4"
+author: "Cassandra Rempel"
+date: "5/10/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(brms)
+library(tidyverse)
+#library(rethinking)
+#library(rstan)
+library(ggplot2)
+library(knitr)
+#library(kableExtra)
+#library(metafor)
+#library(scales)
+#library(lme4)
+library(dplyr)
+library(reshape2)
+library(RColorBrewer)
+library(Rmisc)
+
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r cars}
+#load data
+d <- read.csv("all_data.csv")
+
+
+#group data by question
+#group participants by gender
+names(d)[1] <- "Participant"
+names(d)[2] <- "Consent"
+names(d)[3] <- "Study"
+names(d)[4] <- "Female1"
+names(d)[5] <- "Female2"
+names(d)[6] <- "Female3"
+names(d)[7] <- "Female4"
+names(d)[8] <- "Female5"
+names(d)[9] <- "Female6"
+names(d)[10] <- "Male1"
+names(d)[11] <- "Male2"
+names(d)[12] <- "Male3"
+names(d)[13] <- "Male4"
+names(d)[14] <- "Male5"
+names(d)[15] <- "Male6"
+names(d)[16] <- "StudyAbout"
+names(d)[17] <- "dem_age"
+names(d)[18] <- "dem_participant_gender"
+names(d)[19] <- "dem_occupation"
+names(d)[20] <- "dem_nationality"
+
+#if female1 is NA, put in Male1 and if not NA put Female1: d$ means add this column into the dataframe
+d$Q1_nurturing <- ifelse(is.na(d$Female1), d$Male1 , d$Female1  )
+d$Q2_assertive <- ifelse(is.na(d$Female2), d$Male2 , d$Female2  )
+d$Q3_aggressive <- ifelse(is.na(d$Female3), d$Male3 , d$Female3  )
+d$Q4_emotion <- ifelse(is.na(d$Female4), d$Male4 , d$Female4  )
+d$Q5_defensive <- ifelse(is.na(d$Female5), d$Male5 , d$Female5  )
+d$Q6_etiquette <- ifelse(is.na(d$Female6), d$Male6 , d$Female6  )
+
+#if female1 is NA, then this is the male character condition, else it is female character condition
+
+d$condition <- ifelse (is.na(d$Female1), 'Male_character' , 'Female_character')
+
+#subset, everything that goes before comma are the rows we want to keep and everything after is the columns we want to keep. Nothing before 1st comma means keep all the rows
+#c() means make a list with all the column names we want to keep
+#take d, save as d and take the following columns
+d = d[, c( "Q1_nurturing" , "Q2_assertive", "Q3_aggressive", "Q4_emotion", "Q5_defensive", "Q6_etiquette", "Participant", "condition" , "dem_age", "dem_participant_gender" , "dem_occupation" , "dem_nationality" ) ] 
+
+
+#male average across board, female average across board
+#dont subset often because it isnt optimal - it basically reduces and splits the information
+#demographic variables, subsetting only necessary columns
+
+
+```
+
+## Including Plots
+
+You can also embed plots, for example:
+
+```{r pressure, echo=FALSE}
+#PLOT
+#plot first because it gives us a sense of what we're looking at what to do an analysis on
+#ggplot check long format when coding, what ggplot is designed for
+#change wide to long format, common with plotting
+d_long <- melt(d, id.vars = c("Participant","condition" , "dem_age", "dem_participant_gender" , "dem_occupation" , "dem_nationality"), measure.vars = c('Q1_nurturing' , 'Q2_assertive' , 'Q3_aggressive', 'Q4_emotion', 'Q5_defensive', 'Q6_etiquette'), variable.name = 'question' , value.name = 'acceptance' )
+             
+
+d_summary <- summarySE(d_long, measurevar = 'acceptance' , groupvars = c('question' , 'condition', 'dem_participant_gender'))
+
+d_1 <- summarySE(d_long, measurevar = 'acceptance' , groupvars = c('question' , 'condition'))
+
+
+#here is for plotting 
+#aes for aesthetics and where variables go
+#x var = question
+
+plot1 <- ggplot (d_1, 
+        aes(x = question, y = acceptance, fill = condition)) +
+#now I add the bar plot and  
+  geom_bar (position = 'dodge' , stat = 'identity') +
+  #defines our margins
+  geom_errorbar(aes(ymin=acceptance-se, ymax=acceptance+se),
+                width = 0.2, position = position_dodge(0.9)) +
+  #states the coordinates within the plot
+  coord_cartesian (ylim= c(1,6))+
+  scale_y_continuous(breaks = c(1,2,3,4,5,6))+
+  #color scheme
+  scale_fill_brewer(palette = "Set1")
+
+#same plot but split into men and women
+plot2 <- ggplot (d_summary, 
+        aes(x = question, y = acceptance, fill = condition)) +
+#now I add the bar plot and  
+  geom_bar (position = 'dodge' , stat = 'identity') +
+  #defines our margins
+  geom_errorbar(aes(ymin=acceptance-se, ymax=acceptance+se),
+                width = 0.2, position = position_dodge(0.9)) +
+  #states the coordinates within the plot
+  coord_cartesian (ylim= c(1,6))+
+  scale_y_continuous(breaks = c(1,2,3,4,5,6))+
+  #color scheme
+  scale_fill_brewer(palette = "Set1")+
+  facet_wrap(~dem_participant_gender)
+
+
+#display.brewer.all()
+
+plot1
+plot2
+
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+
+# Run the model using a cumulative probit model
+
+```{r}
+
+specified_priors <- c(
+  set_prior('normal(0,4)',class='b'), 
+  set_prior('student_t(3, 0, 1)', class = 'Intercept')
+)
+
+
+fit_cumulative <- brm(
+  mvbind(Q1_nurturing, Q2_assertive, Q3_aggressive, Q4_emotion, Q5_defensive, Q6_etiquette) ~ condition,
+  data = d,
+  prior= specified_priors,
+  family = cumulative("probit"),
+  control = list(adapt_delta = 0.99, max_treedepth = 25),
+  iter = 4000,
+  chains = 4,
+  #cores = 2,
+  cores = 6,
+  init_r = 0.1
+)
+
+fit_cumulative <- add_criterion(fit_cumulative, "loo")
+
+
+fit_cumulative_interaction <- brm(
+  mvbind(Q1_nurturing, Q2_assertive, Q3_aggressive, Q4_emotion, Q5_defensive, Q6_etiquette) ~ condition*dem_participant_gender,
+  data = d,
+  prior= specified_priors,
+  family = cumulative("probit"),
+  control = list(adapt_delta = 0.99, max_treedepth = 25),
+  iter = 4000,
+  chains = 4,
+  #cores = 2,
+  cores = 6,
+  init_r = 0.1
+)
+
+fit_cumulative_interaction <- add_criterion(fit_cumulative_interaction, "loo")
+
+loo_compare(fit_cumulative, fit_cumulative_interaction)
+```
+
+
+#Run as linear regression
+```{r}
+#getting possible priors
+#get_prior( mvbind(Q1_nurturing, Q2_assertive, Q3_aggressive, Q4_emotion, Q5_defensive, Q6_etiquette) ~ condition*dem_participant_gender, data = d,)
+
+#set mean to 3.5 as an uninformed prior, 10 is variance and will be changed later.
+#sd of 10, 95% of data will be within 2 sds from the mean 1st is 10, 2 is 20. 95% will be 2 std from 3.5 
+#set the lower bound to 1 and upper bound to 6
+#truncated normal distribution, cut distribution. We are doing this to force the model to conform within the existing structure of data
+
+specified_priors <- c(
+  set_prior('normal(0, 2)', class = 'b'),
+  set_prior('student_t(3, 0, 1)', class = 'Intercept')
+)
+
+#Baysian Statistical Analysis 
+#options 
+#1 isolate each question and do an analysis individual questions one at a time.
+#2 make an average measure males vs females, whole vs individual - whole thing together
+#3 fancy bayes, multivariate modeling individually while also considering general slant of the data
+#multivariate binding, multiple variables. multiple output variables - multivariate model.
+
+#simplest
+fit <- brm(
+  mvbind(Q1_nurturing, Q2_assertive, Q3_aggressive, Q4_emotion, Q5_defensive, Q6_etiquette) ~ condition,
+  data = d,
+  prior= specified_priors,
+  chains = 4,
+  #cores = 2,
+  cores = 6
+)
+
+#leave one out = loo, takes data set and removes one data point - removes one and then compares rest of model to that one point and does that for all data points and tests how well the model works in general. Pick one with best loo score
+fit <- add_criterion(fit, "loo")
+
+#men being rated and men rating but not the interaction
+fit_gender <- brm(
+  mvbind(Q1_nurturing, Q2_assertive, Q3_aggressive, Q4_emotion, Q5_defensive, Q6_etiquette) ~ condition+dem_participant_gender,
+  data = d,
+  prior = specified_priors,
+  chains = 4,
+  #cores = 2,
+  cores = 6
+)
+
+fit_gender <- add_criterion(fit_gender, "loo")
+
+
+#evaluating whether or not it is a man rating a man, does it have an effect?
+fit_interaction <- brm(
+  mvbind(Q1_nurturing, Q2_assertive, Q3_aggressive, Q4_emotion, Q5_defensive, Q6_etiquette) ~ condition*dem_participant_gender,
+  data = d,
+  prior = specified_priors,
+  chains = 4,
+  #cores = 2,
+  cores = 6
+)
+
+fit_interaction <- add_criterion(fit_interaction, "loo")
+
+#the comparison doesn't clearly show that any model is better than the others, likely requires more data to be conclusive
+loo_compare(fit, fit_gender, fit_interaction)
+
+
+
+## The cumulative models are best! 
+loo_compare(fit, fit_gender, fit_interaction, fit_cumulative, fit_cumulative_interaction)
+
+```
+
+
+
+```{r}
+#pp_check shows us how well the model is fitted by looking at the lines. The hard black line is the model and the blue ones are the prediction. They should roughly follow the same lines and if they do not, it tells us the model is not well fit
+#pp_check(fit, resp = "Q1nurturing")
+#pp_check(fit, resp = "Q2assertive")
+#pp_check(fit, resp = "Q3aggressive")
+#pp_check(fit, resp = "Q4emotion")
+#pp_check(fit, resp = "Q5defensive")
+#pp_check(fit, resp = "Q6etiquette")
+
+#pp_check(fit_gender, resp = "Q1nurturing")
+#pp_check(fit_gender, resp = "Q2assertive")
+#pp_check(fit_gender, resp = "Q3aggressive")
+#pp_check(fit_gender, resp = "Q4emotion")
+#pp_check(fit_gender, resp = "Q5defensive")
+#pp_check(fit_gender, resp = "Q6etiquette")
+
+#pp_check(fit_interaction, resp = "Q1nurturing")
+#pp_check(fit_interaction, resp = "Q2assertive")
+#pp_check(fit_interaction, resp = "Q3aggressive")
+#pp_check(fit_interaction, resp = "Q4emotion")
+#pp_check(fit_interaction, resp = "Q5defensive")
+#pp_check(fit_interaction, resp = "Q6etiquette")
+
+#sigma signal the size of the variance, variance and not so big in comparison to effect size
+#Q1 evaluating condition off the question
+#being male is a big effect compared to all the other factors
+#variance is in a range to 
+#that the effect size and the variance are in a comparable range
+
+#2 might not be enough to data to conclude from
+#plot(fit)
+
+
+#specifiy priors and they're even more important with less data bc it effects our model choice
+#effect of Participant_gender, do women or men generally rate lower than the other?
+#interaction between participant_gender and condition
+
+#before priors, it appears. there is no different on males rating EXCEPT when rating males, then it is much lower
+
+```
+
+
+
+```{r}
+pp_check(fit_cumulative_interaction, resp = "Q1nurturing")
+pp_check(fit_cumulative_interaction, resp = "Q2assertive")
+pp_check(fit_cumulative_interaction, resp = "Q3aggressive")
+pp_check(fit_cumulative_interaction, resp = "Q4emotion")
+pp_check(fit_cumulative_interaction, resp = "Q5defensive")
+pp_check(fit_cumulative_interaction, resp = "Q6etiquette")
+
+summary(fit_cumulative_interaction)
+plot(fit_cumulative_interaction)
+```
+
+
